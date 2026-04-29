@@ -1,0 +1,258 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  SpotiDev – Infraestructura base en AWS para la plataforma de contenido digital.
+  Incluye una instancia EC2 para ejecutar los contenedores Docker y un bucket S3
+  para almacenamiento de artefactos y logs de despliegue.
+
+# ─── Parámetros configurables ─────────────────────────────
+Parameters:
+
+  ProjectName:
+    Type: String
+    Default: spotidev
+    Description: Nombre del proyecto (usado como prefijo en recursos)
+
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - development
+      - staging
+      - production
+    Description: Ambiente de despliegue
+
+  InstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+    Description: Tipo de instancia EC2
+
+  KeyPairName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Par de llaves SSH para acceso a la instancia EC2
+    Default: spotidev-keypair
+
+  AmiId:
+    Type: String
+    Default: ami-0c02fb55956c7d316
+    Description: AMI de Amazon Linux 2 (us-east-1)
+
+# ─── Recursos ─────────────────────────────────────────────
+Resources:
+
+  # ══════════════════════════════════════════════════════════
+  # BUCKET S3 – Almacenamiento de artefactos y logs
+  # ══════════════════════════════════════════════════════════
+  SpotiDevArtifactsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "${ProjectName}-artifacts-${AWS::AccountId}"
+      AccessControl: Private
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: DeleteOldArtifacts
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Política del bucket: solo acceso desde EC2 via IAM Role
+  SpotiDevBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SpotiDevArtifactsBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowEC2Access
+            Effect: Allow
+            Principal:
+              AWS: !GetAtt SpotiDevEC2Role.Arn
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:ListBucket
+            Resource:
+              - !GetAtt SpotiDevArtifactsBucket.Arn
+              - !Sub "${SpotiDevArtifactsBucket.Arn}/*"
+
+  # ══════════════════════════════════════════════════════════
+  # IAM ROLE – Permisos para que EC2 acceda a S3
+  # ══════════════════════════════════════════════════════════
+  SpotiDevEC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${ProjectName}-ec2-role"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: S3ArtifactsAccess
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource:
+                  - !GetAtt SpotiDevArtifactsBucket.Arn
+                  - !Sub "${SpotiDevArtifactsBucket.Arn}/*"
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+
+  SpotiDevInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "${ProjectName}-instance-profile"
+      Roles:
+        - !Ref SpotiDevEC2Role
+
+  # ══════════════════════════════════════════════════════════
+  # SECURITY GROUP – Reglas de red para EC2
+  # ══════════════════════════════════════════════════════════
+  SpotiDevSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: !Sub "${ProjectName}-sg"
+      GroupDescription: Security group para instancia SpotiDev
+      SecurityGroupIngress:
+        # SSH
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        # App principal
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+        # Servicio auxiliar
+        - IpProtocol: tcp
+          FromPort: 5001
+          ToPort: 5001
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  # ══════════════════════════════════════════════════════════
+  # INSTANCIA EC2 – Servidor principal con Docker
+  # ══════════════════════════════════════════════════════════
+  SpotiDevEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Ref AmiId
+      KeyName: !Ref KeyPairName
+      IamInstanceProfile: !Ref SpotiDevInstanceProfile
+      SecurityGroups:
+        - !Ref SpotiDevSecurityGroup
+      Tags:
+        - Key: Name
+          Value: !Sub "${ProjectName}-server"
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          # ── Script de inicialización de la instancia EC2 ──
+          yum update -y
+
+          # Instalar Docker
+          amazon-linux-extras install docker -y
+          systemctl start docker
+          systemctl enable docker
+          usermod -aG docker ec2-user
+
+          # Instalar Docker Compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" \
+            -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+
+          # Instalar AWS CLI (ya viene en Amazon Linux 2)
+          # Descargar artefacto desde S3
+          mkdir -p /opt/spotidev
+          cd /opt/spotidev
+          aws s3 cp s3://${SpotiDevArtifactsBucket}/latest.zip . --region ${AWS::Region}
+          unzip -o latest.zip
+
+          # Levantar contenedores
+          docker-compose up -d --build
+
+          echo "SpotiDev desplegado correctamente en EC2" > /var/log/spotidev-deploy.log
+
+  # ══════════════════════════════════════════════════════════
+  # CLOUDWATCH ALARM – Monitoreo de CPU
+  # ══════════════════════════════════════════════════════════
+  HighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${ProjectName}-HighCPUAlarm"
+      AlarmDescription: "Alerta cuando el uso de CPU supera el 80% por 10 minutos"
+      MetricName: CPUUtilization
+      Namespace: AWS/EC2
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref SpotiDevEC2Instance
+      TreatMissingData: notBreaching
+
+# ─── Outputs – Valores exportados ─────────────────────────
+Outputs:
+
+  EC2InstanceId:
+    Description: ID de la instancia EC2
+    Value: !Ref SpotiDevEC2Instance
+    Export:
+      Name: !Sub "${ProjectName}-InstanceId"
+
+  EC2PublicIP:
+    Description: IP pública de la instancia EC2
+    Value: !GetAtt SpotiDevEC2Instance.PublicIp
+    Export:
+      Name: !Sub "${ProjectName}-PublicIP"
+
+  AppURL:
+    Description: URL de la aplicación principal
+    Value: !Sub "http://${SpotiDevEC2Instance.PublicIp}:5000"
+
+  HelperURL:
+    Description: URL del servicio auxiliar
+    Value: !Sub "http://${SpotiDevEC2Instance.PublicIp}:5001/status"
+
+  S3BucketName:
+    Description: Nombre del bucket S3 de artefactos
+    Value: !Ref SpotiDevArtifactsBucket
+    Export:
+      Name: !Sub "${ProjectName}-BucketName"
+
+  S3BucketArn:
+    Description: ARN del bucket S3
+    Value: !GetAtt SpotiDevArtifactsBucket.Arn
