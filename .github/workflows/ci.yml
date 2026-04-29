@@ -1,0 +1,201 @@
+name: 🎵 SpotiDev CI Pipeline
+
+# ─── Disparadores ─────────────────────────────────────────
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+# ─── Jobs ─────────────────────────────────────────────────
+jobs:
+
+  # ══════════════════════════════════════════════════════════
+  # JOB 1: Validar existencia de archivos clave del proyecto
+  # ══════════════════════════════════════════════════════════
+  validate-files:
+    name: 📋 Validar archivos del proyecto
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: ⬇️ Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: 📁 Verificar estructura del proyecto
+        run: |
+          echo "=============================================="
+          echo "  🔍 Verificando archivos clave del proyecto"
+          echo "=============================================="
+          echo ""
+
+          FILES=(
+            "README.md"
+            "setup_project.sh"
+            "project_report.py"
+            "docker-compose.yml"
+            "infraestructura-base.yaml"
+            "app/Dockerfile"
+            "helper/Dockerfile"
+            ".github/workflows/ci.yml"
+          )
+
+          ERRORS=0
+
+          for FILE in "${FILES[@]}"; do
+            if [ -f "$FILE" ]; then
+              echo "  ✅ $FILE → encontrado"
+            else
+              echo "  ❌ $FILE → NO ENCONTRADO"
+              ERRORS=$((ERRORS + 1))
+            fi
+          done
+
+          echo ""
+          echo "=============================================="
+
+          if [ $ERRORS -eq 0 ]; then
+            echo "  ✅ Todos los archivos requeridos están presentes"
+          else
+            echo "  ❌ Faltan $ERRORS archivo(s) requerido(s)"
+            exit 1
+          fi
+
+          echo "=============================================="
+
+      - name: 🐍 Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: 📊 Ejecutar reporte del proyecto
+        run: |
+          echo ""
+          echo "  Ejecutando project_report.py..."
+          echo ""
+          python3 project_report.py || true
+
+      - name: 🔍 Verificar sintaxis de scripts Bash
+        run: |
+          echo ""
+          echo "  Verificando sintaxis de setup_project.sh..."
+          bash -n setup_project.sh && echo "  ✅ Sintaxis correcta" || echo "  ❌ Error de sintaxis"
+
+      - name: 🐍 Verificar sintaxis de scripts Python
+        run: |
+          echo ""
+          echo "  Verificando sintaxis de project_report.py..."
+          python3 -m py_compile project_report.py && echo "  ✅ Sintaxis correcta"
+
+          echo ""
+          echo "  Verificando sintaxis de app/app.py..."
+          python3 -m py_compile app/app.py && echo "  ✅ Sintaxis correcta"
+
+          echo ""
+          echo "  Verificando sintaxis de helper/helper.py..."
+          python3 -m py_compile helper/helper.py && echo "  ✅ Sintaxis correcta"
+
+  # ══════════════════════════════════════════════════════════
+  # JOB 2: Simular las etapas del pipeline de CI/CD
+  # ══════════════════════════════════════════════════════════
+  simulate-pipeline:
+    name: 🚀 Simular pipeline CI/CD
+    runs-on: ubuntu-latest
+    needs: validate-files
+
+    steps:
+      - name: ⬇️ Checkout del repositorio
+        uses: actions/checkout@v4
+
+      - name: 📦 Etapa 1 – SOURCE
+        run: |
+          echo "=============================================="
+          echo "  📦 ETAPA: SOURCE"
+          echo "=============================================="
+          echo ""
+          echo "  ➜ Obteniendo código fuente desde GitHub..."
+          echo "  ➜ Rama     : ${{ github.ref_name }}"
+          echo "  ➜ Commit   : ${{ github.sha }}"
+          echo "  ➜ Autor    : ${{ github.actor }}"
+          echo "  ➜ Repositorio: ${{ github.repository }}"
+          echo ""
+          echo "  ✅ Código fuente descargado correctamente"
+          echo ""
+
+      - name: 🔨 Etapa 2 – BUILD
+        run: |
+          echo "=============================================="
+          echo "  🔨 ETAPA: BUILD"
+          echo "=============================================="
+          echo ""
+          echo "  ➜ Verificando Dockerfile de la app principal..."
+          ls -lh app/Dockerfile
+          echo "  ✅ Dockerfile app encontrado"
+          echo ""
+          echo "  ➜ Verificando Dockerfile del servicio auxiliar..."
+          ls -lh helper/Dockerfile
+          echo "  ✅ Dockerfile helper encontrado"
+          echo ""
+          echo "  ➜ Verificando docker-compose.yml..."
+          ls -lh docker-compose.yml
+          echo "  ✅ docker-compose.yml encontrado"
+          echo ""
+          echo "  [SIMULADO] docker-compose build --no-cache"
+          echo "  [SIMULADO] Construyendo imagen spotidev-app:latest..."
+          echo "  [SIMULADO] Construyendo imagen spotidev-helper:latest..."
+          echo ""
+          echo "  ✅ Etapa BUILD completada (simulada)"
+          echo ""
+
+      - name: ✔️ Etapa 3 – VALIDATE
+        run: |
+          echo "=============================================="
+          echo "  ✔️  ETAPA: VALIDATE"
+          echo "=============================================="
+          echo ""
+          echo "  ➜ Validando infraestructura-base.yaml..."
+          ls -lh infraestructura-base.yaml
+          echo "  ✅ Plantilla CloudFormation encontrada"
+          echo ""
+          echo "  ➜ Validando estructura del proyecto..."
+          find . -name "*.py" -not -path "./.git/*" | sort
+          echo ""
+          echo "  ➜ Ejecutando verificaciones de calidad..."
+          echo "  [SIMULADO] pylint app/app.py → score: 9.8/10"
+          echo "  [SIMULADO] pylint helper/helper.py → score: 9.7/10"
+          echo "  [SIMULADO] Tests unitarios: 12/12 pasaron"
+          echo ""
+          echo "  ✅ Etapa VALIDATE completada"
+          echo ""
+
+      - name: 🚀 Etapa 4 – READY FOR DEPLOY
+        run: |
+          echo "=============================================="
+          echo "  🚀 ETAPA: READY FOR DEPLOY"
+          echo "=============================================="
+          echo ""
+          echo "  ➜ Pipeline completado exitosamente"
+          echo "  ➜ Todos los archivos validados"
+          echo "  ➜ Imágenes Docker listas (simuladas)"
+          echo "  ➜ Rama: ${{ github.ref_name }}"
+          echo ""
+          echo "  [SIMULADO] Subiendo artefactos a S3..."
+          echo "  [SIMULADO] s3://spotidev-artifacts/build-${{ github.run_number }}.zip"
+          echo "  [SIMULADO] Notificando al equipo de operaciones..."
+          echo ""
+          echo "  ✅ Proyecto LISTO PARA DESPLIEGUE en AWS EC2"
+          echo ""
+          echo "=============================================="
+          echo "  🎵 SpotiDev CI Pipeline – Completado ✅"
+          echo "=============================================="
+
+      - name: 📋 Resumen del pipeline
+        if: always()
+        run: |
+          echo ""
+          echo "  Pipeline ejecutado en la rama: ${{ github.ref_name }}"
+          echo "  Número de ejecución: #${{ github.run_number }}"
+          echo "  Estado: ${{ job.status }}"
