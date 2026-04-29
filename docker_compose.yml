@@ -1,0 +1,67 @@
+version: "3.9"
+
+# ─── SpotiDev – Docker Compose ────────────────────────────
+# Orquesta los dos contenedores del proyecto:
+#   1. spotidev-app    → Aplicación Flask principal (puerto 5000)
+#   2. spotidev-helper → Servicio auxiliar de estado (puerto 5001)
+
+services:
+
+  # ── Contenedor 1: Aplicación Principal ──────────────────
+  spotidev-app:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: spotidev-app
+    image: spotidev-app:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - APP_ENV=production
+      - PORT=5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - spotidev-network
+    labels:
+      - "project=spotidev"
+      - "service=app"
+      - "role=main"
+
+  # ── Contenedor 2: Servicio Auxiliar ─────────────────────
+  spotidev-helper:
+    build:
+      context: ./helper
+      dockerfile: Dockerfile
+    container_name: spotidev-helper
+    image: spotidev-helper:latest
+    ports:
+      - "5001:5001"
+    environment:
+      - PORT=5001
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      - spotidev-app
+    networks:
+      - spotidev-network
+    labels:
+      - "project=spotidev"
+      - "service=helper"
+      - "role=auxiliary"
+
+# ── Red interna del proyecto ─────────────────────────────
+networks:
+  spotidev-network:
+    driver: bridge
+    name: spotidev-network
